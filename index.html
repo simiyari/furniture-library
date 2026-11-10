@@ -254,6 +254,7 @@ function detail(code) {
     <div class="info">
       <h2 class="u">${esc(d.name)}</h2>
       <dl>${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+      ${d.img ? `<div class="row"><button class="btn u" type="button" id="dl">Download photo + specs</button><span class="toast u" id="dl-note"></span></div>` : ""}
       <div class="prompt"><span class="u muted">Prompt line, brand-free</span><p id="d-line">${esc(d.line)}</p>
         <div class="row"><button class="u link" type="button" id="copy">Copy line</button><span class="toast u" id="toast">Copied</span></div></div>
       <div class="row">${d.url ? `<a class="u" href="${esc(d.url)}" target="_blank" rel="noopener">Size source ↗</a>` : ""}${d.img_page ? `<a class="u" href="${esc(d.img_page)}" target="_blank" rel="noopener">Photo source ↗</a>` : ""}</div>
@@ -262,7 +263,61 @@ function detail(code) {
     try { await navigator.clipboard.writeText(d.line); } catch (e) { const r = document.createRange(); r.selectNodeContents($("d-line")); getSelection().removeAllRanges(); getSelection().addRange(r); }
     $("toast").classList.add("on"); setTimeout(() => $("toast").classList.remove("on"), 1600);
   });
+  $("dl")?.addEventListener("click", async () => {
+    const note = t => { $("dl-note").textContent = t; $("dl-note").classList.add("on"); setTimeout(() => $("dl-note").classList.remove("on"), 2400); };
+    try { download(await specSheet(d), fileName(d)); note("Saved"); } catch (e) { note("Could not make the file"); }
+  });
   open("detail");
+}
+
+// Download: one JPEG, the photo on white with the specs printed under it — one file a phone can save or send as it is.
+// Browser canvas + <a download>, no library; the photo is same-origin (img/), so the canvas can be exported.
+const fileName = d => `${d.code}-${d.name.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}.jpg`;
+function wrap(ctx, text, width) {
+  const lines = []; let line = "";
+  for (const word of String(text).split(/\s+/)) {
+    for (let w = word; w; ) {  // a long URL has no spaces: break it by characters
+      let cut = w.length; while (cut > 1 && ctx.measureText((line ? line + " " : "") + w.slice(0, cut)).width > width) cut--;
+      if (cut < w.length || ctx.measureText((line ? line + " " : "") + w).width > width) {
+        if (line) { lines.push(line); line = ""; continue; }
+        lines.push(w.slice(0, cut)); w = w.slice(cut); continue;
+      }
+      line = line ? line + " " + w : w; w = "";
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+async function specSheet(d) {
+  const img = new Image(); img.src = d.img; await img.decode();
+  try { await document.fonts.load('400 28px "Work Sans"'); } catch (e) {}
+  const W = 1200, PAD = 64, LABEL = 250, LH = 40, BOX = 1000, FONT = '"Work Sans", Arial, sans-serif';
+  const rows = [["Code", d.code], ["Maker", d.maker], ["Designer", d.designer], ["Year", d.year], ["Size", sizeText(d.size)],
+    ["Materials", d.materials], ["Source", d.url || d.img_page]].filter(r => r[1]);
+  const c = document.createElement("canvas"), ctx = c.getContext("2d");
+  ctx.font = `400 28px ${FONT}`;
+  const wrapped = rows.map(([k, v]) => [k, wrap(ctx, v, W - PAD * 2 - LABEL)]);
+  c.width = W; c.height = BOX + 56 + 52 + 24 + wrapped.reduce((n, [, l]) => n + l.length * LH + 12, 0) + 40 + 48;
+  ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, c.width, c.height);
+  const s = Math.min((W - PAD * 2) / img.naturalWidth, (BOX - PAD * 2) / img.naturalHeight);
+  ctx.drawImage(img, (W - img.naturalWidth * s) / 2, (BOX - img.naturalHeight * s) / 2, img.naturalWidth * s, img.naturalHeight * s);
+  ctx.fillStyle = "#eeeeee"; ctx.fillRect(PAD, BOX, W - PAD * 2, 1);
+  let y = BOX + 56 + 36;
+  ctx.textBaseline = "alphabetic"; ctx.fillStyle = "#231f20"; ctx.font = `400 36px ${FONT}`;
+  ctx.fillText(d.name.toUpperCase(), PAD, y); y += 24 + 12;
+  ctx.font = `400 28px ${FONT}`;
+  for (const [k, lines] of wrapped) {
+    y += LH; ctx.fillStyle = "#6f6e6d"; ctx.fillText(k, PAD, y);
+    ctx.fillStyle = "#231f20"; lines.forEach((l, i) => ctx.fillText(l, PAD + LABEL, y + i * LH));
+    y += (lines.length - 1) * LH + 12;
+  }
+  ctx.fillStyle = "#6f6e6d"; ctx.font = `400 22px ${FONT}`; ctx.fillText("Furniture Library", PAD, c.height - 40);
+  return new Promise((ok, no) => c.toBlob(b => b ? ok(b) : no(new Error("empty")), "image/jpeg", 0.92));
+}
+function download(blob, name) {
+  const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
 }
 
 $("q").value = S.q;
